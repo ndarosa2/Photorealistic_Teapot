@@ -106,8 +106,6 @@ void main() {
   // dP/ds = (dx/ds, dy/ds,dz/ds) 
   vec3 ps = normalize(vec3(-2.0*sin(vTexCoord.s),0.0,2.0*cos(vTexCoord.s))); // dP/ds
   
-  //vec3 nCrosspt = normalize(cross(vNormalNormalized,pt));
-  //vec3 nCrossps = normalize(cross(vNormalNormalized,ps));
   vec3 nCrosspt = normalize(cross(aVertexNormal2Normalized,pt));
   vec3 nCrossps = normalize(cross(aVertexNormal2Normalized,ps));
   float ds = 1.0/512.0; // should be one pixel in the texture map 
@@ -347,11 +345,7 @@ function initwebgl() {
   //
   // set up transformation matrices
   //
-    // since black and white image, change to gl.LUMINANCE 
   projection = glMatrix.mat4.create();
-  // Original perpsective matrix  - NJD 
-  //glMatrix.mat4.perspective(projection, Math.PI/6, 1.0, 0.1);
-  // Experimental perspective matrix - NJD
   glMatrix.mat4.perspective(projection, Math.PI/6, 1.0,0.1);
   requestAnimationFrame(draw);
 }
