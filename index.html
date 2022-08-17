@@ -172,7 +172,7 @@
     
     
     
-    function initwebgl(surf_text) {
+    function initwebgl() {
     
       //
       // create a graphics context
@@ -290,8 +290,10 @@
                     gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 255, 255]));
     
       var image2 = new Image();
+      var image2_source = document.getElementById('select_sphere_map').value;
       //image2.src = "stadium sphere.jpg";
-      image2.src = "stpeters_probe.png";  // source for St. Peter's Basilica probe: https://www.pauldebevec.com/Probes/
+      // image2.src = "stpeters_probe.png";  // source for St. Peter's Basilica probe: https://www.pauldebevec.com/Probes/
+      image2.src = image2_source;  // source for St. Peter's Basilica probe: https://www.pauldebevec.com/Probes/
       image2.addEventListener("load", function() {
         gl.bindTexture(gl.TEXTURE_2D, texture2);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -325,9 +327,11 @@
                     gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 255, 255]));
     
       var image3 = new Image();
+      
       //image3.src = "flycut_Roughness2.png";
      // image3.src = "illinois512croppedBWblur.png";
-      image3.src = surf_text;
+      var image3_source = document.getElementById('select_surface_texture').value;
+      image3.src = image3_source;
       image3.addEventListener("load", function() {
         gl.bindTexture(gl.TEXTURE_2D, texture3);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -438,11 +442,21 @@
 
     <canvas id="myGLCanvas" width="600" height="600"></canvas>
     <p><b>Select surface texture</b></p>
-    <select name="select_surface_texture" id="select_surface_texture" onchange="initwebgl(this.value)">
+    
+    <label for="select_surface_texture">Select surface texture:</label>
+    <select name="select_surface_texture" id="select_surface_texture" onchange="initwebgl()">
       <option value="">None</option>
       <option value="illinois512croppedBWblur.png">UIUC Logo</option>
       <option value="flycut_Roughness2.png">Metal Flycut</option>
     </select>
+    
+     <label for="select_sphere_map">Select sphere map:</label>
+    <select name="select_sphere_map" id="select_sphere_map" onchange='initwebgl()'>
+      <option value="">None</option>
+      <option value="stadium_sphere_1500.jpeg">UIUC Stadium</option>
+      <option value="stpeters_probe.png">St. Peter's Basilica</option>
+    </select>
+    
     <h2><b>Description</b></h2>
     <p><b>Rotating Utah teapot that uses a combination of Lambertian diffuse reflection, Phong specular reflection, cylindrical texture mapping, procedure texture generation, bump mapping, and a spherical environment map to render an approximate photorealistic teapot.</b></p>
     <p><u>Geometry Processing</u></p>
