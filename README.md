@@ -1,7 +1,5 @@
 # Photorealistic Teapot Using WebGL Project by Nicholas DaRosa
-Github Page: https://ndarosa2.github.io/uiuc-cs418-ndarosa2/
-
-Repository link: https://github.com/ndarosa2/uiuc-cs418-ndarosa2
+Github Page: https://ndarosa2.github.io/Photorealistic_Teapot/
 
 Rotating Utah teapot that uses a combination of Lambertian diffuse reflection, Phong specular reflection, cylindrical texture mapping, procedure texture generation, bump mapping, and a spherical environment map to render an approximate photorealistic teapot. 
 
