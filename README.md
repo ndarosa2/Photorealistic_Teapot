@@ -1,4 +1,4 @@
-# cs418-fa21-project by Nicholas DaRosa
+# Photorealistic Teapot Using WebGL Project by Nicholas DaRosa
 Github Page: https://ndarosa2.github.io/uiuc-cs418-ndarosa2/
 
 Repository link: https://github.com/ndarosa2/uiuc-cs418-ndarosa2
