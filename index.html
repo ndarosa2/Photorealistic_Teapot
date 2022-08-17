@@ -390,7 +390,8 @@
     //
     
     function draw(time) {
-      gl.clearColor(0.075, 0.16, 0.294, 1.0);
+      // gl.clearColor(0.075, 0.16, 0.294, 1.0); // blue background
+      gl.clearColor(1.0, 1.0, 1.0, 1.0); // white background
       gl.clearDepth(1.0);
       gl.enable(gl.DEPTH_TEST);
       gl.depthFunc(gl.LEQUAL);
