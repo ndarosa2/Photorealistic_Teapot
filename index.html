@@ -172,7 +172,7 @@
     
     
     
-    function initwebgl() {
+    function initwebgl(surf_text) {
     
       //
       // create a graphics context
@@ -326,7 +326,8 @@
     
       var image3 = new Image();
       //image3.src = "flycut_Roughness2.png";
-      image3.src = "illinois512croppedBWblur.png";
+     // image3.src = "illinois512croppedBWblur.png";
+      image3.src = surf_text;
       image3.addEventListener("load", function() {
         gl.bindTexture(gl.TEXTURE_2D, texture3);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -436,9 +437,10 @@
     <h1><b>Photorealistic Utah Teapot by Nicholas DaRosa</b></h1>
      <p><b>Select surface texture</b></p>
     <select name="select_surface_texture" id="select_surface_texture" onchange="initwebgl(this.value)">
-      <option value="UIUC Logo">1</option>
-      <option value="Metal Flycut">2</option>
+      <option value="illinois512cropped.png">UIUC Logo</option>
+      <option value="flycut_Roughness2.png">Metal Flycut</option>
     </select>
+    
     <canvas id="myGLCanvas" width="600" height="600"></canvas>
     <h1><b>Description</b></h1>
     <p><b>Rotating Utah teapot that uses a combination of Lambertian diffuse reflection, Phong specular reflection, cylindrical texture mapping, procedure texture generation, bump mapping, and a spherical environment map to render an approximate photorealistic teapot.</b></p>
