@@ -1,467 +1,456 @@
 <!DOCTYPE HTML> 
-<html> 
-
-<script src="unit teapot.js"></script>
-
-<script src="gl-matrix-min.js"></script>
-
-<script>
-var gl;
-var shaderProgram;
-var modelview_uniform;
-var normal_uniform;
-var projection_uniform;
-var texture, texture2, texture3; //  texture3 for bump mapping
-var sampler_uniform;
-var sampler2_uniform;
-var sampler3_uniform; // for bump mapping
-var teapot_vao;
-var vert_pos_attr;
-var vert_normal_attr;
-
-//
-// a default vertex shader implemented as a backquoted string variable
-//
-
-var vs = `#version 300 es
-
-in vec3 aVertexPosition;
-in vec3 aVertexNormal;
-in vec2 aTexCoord;
-
-uniform mat4 uModelViewMatrix;
-uniform mat3 uNormalMatrix;
-uniform mat4 uProjectionMatrix;
-
-// copy of aVertexPosition (in model coordinates) that is used in fragment shader for calculating cylindrical texture coordinates
-out vec3 aVertexPosition2; 
-out vec2 vTexCoord;
-out vec3 vNormal;
-out vec3 aVertexNormal2; 
-out mat3 uNormalMatrix2;
-out vec3 l;
-out vec3 v;
-
-void main() {
-
-  vNormal = normalize(uNormalMatrix*aVertexNormal); // normal vector in viewing coordinates
-
-  // out and that seemed to fix the rotating light
-  // l is light direction in terms of x,y,z
-  l = normalize(vec3(1.0,0.25,1.0)); 
-  vec4 p = uModelViewMatrix*vec4(aVertexPosition, 1.0);
-  v = normalize(-p.xyz);
-  aVertexNormal2 = aVertexNormal; 
-  aVertexPosition2 = aVertexPosition;
-  uNormalMatrix2 = uNormalMatrix;
-  gl_Position = uProjectionMatrix*uModelViewMatrix*vec4(aVertexPosition, 1.0);
-}
-`;
-
-//
-// a default fragment shader implemented as a backquoted string variable
-//
-
-var fs = `#version 300 es
-
-precision mediump float;
-
-in vec3 aVertexPosition2;
-in vec3 vNormal;
-in vec2 vTexCoord;
-in vec3 aVertexNormal2; 
-in mat3 uNormalMatrix2;
-in vec3 l;
-in vec3 v;
-uniform sampler2D uSampler;
-uniform sampler2D uSampler2;
-uniform sampler2D uSampler3; // for bump mapping
-
-out vec4 outColor;
+<html>
+  <script src="unit teapot.js"></script>
+  <script src="gl-matrix-min.js"></script>
+  <script>
+    var gl;
+    var shaderProgram;
+    var modelview_uniform;
+    var normal_uniform;
+    var projection_uniform;
+    var texture, texture2, texture3; //  texture3 for bump mapping
+    var sampler_uniform;
+    var sampler2_uniform;
+    var sampler3_uniform; // for bump mapping
+    var teapot_vao;
+    var vert_pos_attr;
+    var vert_normal_attr;
     
-void main() {
-
-  vec2 vTexCoord;
-  // From https://tutorial.math.lamar.edu/classes/calciii/CylindricalCoords.aspx 
-  // Note coordinate axis orientation between equations given below and model coords are not the same (e.g. y is up in model)
-  // x = rcos(theta) --> dx/dtheta = -rsin(theta), dx/dz = 0
-  // y = rsin(theta) --> dy/dtheta = rcos(theta), dy/dz = 0
-  // z = z --> dz/dtheta --> 0, dz/dz = 1.0
-  // theta = atan(y/x)
-  // z = z
-  // +z axis up, +y axis to the right, +x axis towards the viewer 
-
-  // Cylindrical mapping with a shift and/or scale
-  vTexCoord.s = atan(-aVertexPosition2.z,aVertexPosition2.x)/(2.0*3.141592653);
-  vTexCoord.t = aVertexPosition2.y/0.5+ 0.5;
-
-  // Normalize normal vector due to interpolation (interpolated normal not guaranteed to be unit vector) 
-  vec3 vNormalNormalized = normalize(vNormal);
-
-  vec3 aVertexNormal2Normalized = normalize(aVertexNormal2); // normalized interpolated normal in model coordinates
-
-  // For bump mapping using height map
-  // dP/dt = (dx/dt, dy/dt,dz/dt) - reference equations above but need to switch around axis orientation  
-  vec3 pt = vec3(0.0,1.0,0.0); //dP/dt
-  // dP/ds = (dx/ds, dy/ds,dz/ds) 
-  vec3 ps = normalize(vec3(-2.0*sin(vTexCoord.s),0.0,2.0*cos(vTexCoord.s))); // dP/ds
-  
-  vec3 nCrosspt = normalize(cross(aVertexNormal2Normalized,pt));
-  vec3 nCrossps = normalize(cross(aVertexNormal2Normalized,ps));
-  float ds = 1.0/512.0; // should be one pixel in the texture map 
-  float dt = 1.0/512.0; // should be one pixel in the texture map 
-  
-  // .r to just take first component, since all comps should be the same
-  float bumpHeight = (vec3(texture(uSampler3, vTexCoord))).r; 
-  float bumpHeightPlus_ds = (vec3(texture(uSampler3, vTexCoord+vec2(ds,0.0)))).r; 
-  float bumpHeightPlus_dt = (vec3(texture(uSampler3, vTexCoord+vec2(0.0,dt)))).r;
-
-  //float dbds = 1.0*(bumpHeightPlus_ds-bumpHeight)/ds; // commented out for reference, see below
-  //float dbdt = 1.0*(bumpHeightPlus_dt-bumpHeight)/dt;
-
-  // whether or not divide by ds, dt doesn't really matter since just affects bump scale coefficient
-  float dbds = 4.0*(bumpHeightPlus_ds-bumpHeight); // coefficient scales bump effect
-  float dbdt = 4.0*(bumpHeightPlus_dt-bumpHeight); // coefficient scales bump effect
-
-  //vec3 nBumped1 = normalize(aVertexNormal2Normalized - dbds*nCrosspt + dbdt*nCrossps);
-  vec3 nBumped = normalize(uNormalMatrix2*normalize(aVertexNormal2Normalized - dbds*nCrosspt + dbdt*nCrossps));
-
-  // For spherical environment mapping texture coordinates (using normal perturbed by bump mapping)
-  vec2 vTexCoordRefl = vec2((nBumped.x+1.0)/2.0, (nBumped.y+1.0)/2.0);
-
-  // coefficient for diffuse reflection 
-  float kd = 0.4; 
-  // coefficient for specular reflection;
-  float ks = 0.3; 
-  // coefficient for white ambient light
-  float ka = 0.15; 
-  // coefficient for spherical environmental map which acts similar to ambient
-  float ka_probe = 0.15; 
-
-  // color of the specular light
-  vec3 whitelight = vec3(1.0,1.0,1.0); 
-
-  // color of the diffuse light. If no textures, teapot just looks like color of diffuse light
-  vec3 whitelight2 = vec3(1.0,1.0,1.0); 
- 
-  vec3 baseTexture = vec3(texture(uSampler, vTexCoord));
-  vec3 sphereProbe = vec3(texture(uSampler2, vTexCoordRefl));
-
-  // Doing polka dots for procedural texture - based off of Professor Hart's implementation shown in office hours
-  // scale the model coordinates by some amount so rounding to nearest integer works properly
-  vec3 scaledVertexPosition2 = 15.0*aVertexPosition2;
-  // set color to a dimmer white by default
-  vec3 polkadot = vec3(0.5,0.5,0.5); 
-  if(distance(scaledVertexPosition2, roundEven(scaledVertexPosition2)) < 0.18)
-    // polkadots are supposed to be gold
-    polkadot = vec3(1.0,0.843,0.0);
-
-  // material color - using a mix of the the procedural texture and the base texture
-  vec3 materialcolor = 0.45*polkadot + 0.55*baseTexture; //+ 0.4*sphereProbe;
-
-  // lambertian reflection calculation. Material color from textures * white light * n.l where n is the bumped normal
-  vec3 diffuselight = whitelight2*max(dot(nBumped,normalize(l)),0.0);
- 
-  // reflection vector for specular light - using perturbed normal (bump normal)
-  vec3 r = normalize(reflect(normalize(-l),nBumped));
-  // specular light calculation
-  vec3 specularlight = whitelight*pow(max(dot(normalize(v),normalize(r)),0.0),10.0);
-
-  vec3 c = ka*sphereProbe + ka_probe*materialcolor + ks*specularlight + kd*diffuselight*materialcolor;
-                                                                             
-  outColor = vec4(c,1.0);
-}
-`;
-
-
-
-function initwebgl() {
-
-  //
-  // create a graphics context
-  //
-
-  var canvas = document.getElementById("myGLCanvas");
-  gl = canvas.getContext("webgl2");
-  if (!gl)
-    alert("Failed to create WebGL context!");
-
-  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-
-  loadshaders(vs,fs);
-
-  // set up vertex array object
- 
-  teapot_vao = gl.createVertexArray();
-  gl.bindVertexArray(teapot_vao);
-
-  // create a coordinate buffer of vertex positions and
-  // connect it to the vertex shader positions
- 
-  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
-  gl.bufferData(gl.ARRAY_BUFFER,
-                new Float32Array(teapot.positions),
-                gl.STATIC_DRAW);
-
-  gl.enableVertexAttribArray(vert_pos_attr);
-  gl.vertexAttribPointer(vert_pos_attr, 3, gl.FLOAT, false, 0, 0);
-
-  // create a coordinate buffer of vertex positions and
-  // connect it to the vertex shader positions
-  // but normalize the normals first
-
-  var x,y,z,d,i;
-  for (i = 0; i < teapot.normals.length; i += 3) {
-    x = teapot.normals[i];
-    y = teapot.normals[i+1];
-    z = teapot.normals[i+2];
-
-    d = 1.0/Math.sqrt(x*x + y*y + z*z);
-
-    teapot.normals[i] *= d;
-    teapot.normals[i+1] *= d;
-    teapot.normals[i+2] *= d;
+    //
+    // a default vertex shader implemented as a backquoted string variable
+    //
     
-  }
-
-  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
-  gl.bufferData(gl.ARRAY_BUFFER,
-                new Float32Array(teapot.normals),
-                gl.STATIC_DRAW);
-
-  gl.enableVertexAttribArray(vert_normal_attr);
-  gl.vertexAttribPointer(vert_normal_attr, 3, gl.FLOAT, false, 0, 0);
-
-  // create an index buffer of triangle faces
-
-  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.createBuffer()); 
-  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,
-                new Uint16Array(teapot.faces),
-                gl.STATIC_DRAW);
-
-  //
-  // set up texture and sampler
-  // BASE TEXTURE
-
-  texture = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, texture);
-
-  var sampler = gl.createSampler();
-  gl.bindSampler(0, sampler);
-
-  //
-  // load texture image using webgl2fundamentals boilerplate
-  // initially creates just a 1x1 blue pixel as a placeholder
-  // replaced by actual texture image once loaded
-  // 
-
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA,
-                gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 255, 255]));
-
-  var image = new Image();
-  //image.src = "illinois512cropped.png";
-  image.src = "flycut2.png"; // source: https://renderman.pixar.com/pixar-one-thirty under Millmetals. 
-
-  image.addEventListener("load", function() {
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    // Need to update texture RESOLUTION if change the image from UIUC stadium to image with different resolution
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 512, 0, gl.RGBA, gl.UNSIGNED_BYTE, image);
-    gl.generateMipmap(gl.TEXTURE_2D);
-  });
-
-  //
-  // set up second texture and sampler
-  // REFLECTION MAP
-
-  texture2 = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, texture2);
-
-  var sampler2 = gl.createSampler();
-  gl.bindSampler(1, sampler2);
-
-  //
-  // load texture image using webgl2fundamentals boilerplate
-  // initially creates just a 1x1 blue pixel as a placeholder
-  // replaced by actual texture image once loaded
-  //
-
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA,
-                gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 255, 255]));
-
-  var image2 = new Image();
-  //image2.src = "stadium sphere.jpg";
-  image2.src = "stpeters_probe.png";  // source for St. Peter's Basilica probe: https://www.pauldebevec.com/Probes/
-  image2.addEventListener("load", function() {
-    gl.bindTexture(gl.TEXTURE_2D, texture2);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    // Need to update textture RESOLUTION if change the image from UIUC stadium to something else
-    //gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 256, 0, gl.RGBA, gl.UNSIGNED_BYTE, image2);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1500, 1500, 0, gl.RGBA, gl.UNSIGNED_BYTE, image2);
-    gl.generateMipmap(gl.TEXTURE_2D);
-  });
+    var vs = `#version 300 es
+    
+    in vec3 aVertexPosition;
+    in vec3 aVertexNormal;
+    in vec2 aTexCoord;
+    
+    uniform mat4 uModelViewMatrix;
+    uniform mat3 uNormalMatrix;
+    uniform mat4 uProjectionMatrix;
+    
+    // copy of aVertexPosition (in model coordinates) that is used in fragment shader for calculating cylindrical texture coordinates
+    out vec3 aVertexPosition2; 
+    out vec2 vTexCoord;
+    out vec3 vNormal;
+    out vec3 aVertexNormal2; 
+    out mat3 uNormalMatrix2;
+    out vec3 l;
+    out vec3 v;
+    
+    void main() {
+    
+      vNormal = normalize(uNormalMatrix*aVertexNormal); // normal vector in viewing coordinates
+    
+      // out and that seemed to fix the rotating light
+      // l is light direction in terms of x,y,z
+      l = normalize(vec3(1.0,0.25,1.0)); 
+      vec4 p = uModelViewMatrix*vec4(aVertexPosition, 1.0);
+      v = normalize(-p.xyz);
+      aVertexNormal2 = aVertexNormal; 
+      aVertexPosition2 = aVertexPosition;
+      uNormalMatrix2 = uNormalMatrix;
+      gl_Position = uProjectionMatrix*uModelViewMatrix*vec4(aVertexPosition, 1.0);
+    }
+    `;
+    
+    //
+    // a default fragment shader implemented as a backquoted string variable
+    //
+    
+    var fs = `#version 300 es
+    
+    precision mediump float;
+    
+    in vec3 aVertexPosition2;
+    in vec3 vNormal;
+    in vec2 vTexCoord;
+    in vec3 aVertexNormal2; 
+    in mat3 uNormalMatrix2;
+    in vec3 l;
+    in vec3 v;
+    uniform sampler2D uSampler;
+    uniform sampler2D uSampler2;
+    uniform sampler2D uSampler3; // for bump mapping
+    
+    out vec4 outColor;
+        
+    void main() {
+    
+      vec2 vTexCoord;
+      // From https://tutorial.math.lamar.edu/classes/calciii/CylindricalCoords.aspx 
+      // Note coordinate axis orientation between equations given below and model coords are not the same (e.g. y is up in model)
+      // x = rcos(theta) --> dx/dtheta = -rsin(theta), dx/dz = 0
+      // y = rsin(theta) --> dy/dtheta = rcos(theta), dy/dz = 0
+      // z = z --> dz/dtheta --> 0, dz/dz = 1.0
+      // theta = atan(y/x)
+      // z = z
+      // +z axis up, +y axis to the right, +x axis towards the viewer 
+    
+      // Cylindrical mapping with a shift and/or scale
+      vTexCoord.s = atan(-aVertexPosition2.z,aVertexPosition2.x)/(2.0*3.141592653);
+      vTexCoord.t = aVertexPosition2.y/0.5+ 0.5;
+    
+      // Normalize normal vector due to interpolation (interpolated normal not guaranteed to be unit vector) 
+      vec3 vNormalNormalized = normalize(vNormal);
+    
+      vec3 aVertexNormal2Normalized = normalize(aVertexNormal2); // normalized interpolated normal in model coordinates
+    
+      // For bump mapping using height map
+      // dP/dt = (dx/dt, dy/dt,dz/dt) - reference equations above but need to switch around axis orientation  
+      vec3 pt = vec3(0.0,1.0,0.0); //dP/dt
+      // dP/ds = (dx/ds, dy/ds,dz/ds) 
+      vec3 ps = normalize(vec3(-2.0*sin(vTexCoord.s),0.0,2.0*cos(vTexCoord.s))); // dP/ds
+      
+      vec3 nCrosspt = normalize(cross(aVertexNormal2Normalized,pt));
+      vec3 nCrossps = normalize(cross(aVertexNormal2Normalized,ps));
+      float ds = 1.0/512.0; // should be one pixel in the texture map 
+      float dt = 1.0/512.0; // should be one pixel in the texture map 
+      
+      // .r to just take first component, since all comps should be the same
+      float bumpHeight = (vec3(texture(uSampler3, vTexCoord))).r; 
+      float bumpHeightPlus_ds = (vec3(texture(uSampler3, vTexCoord+vec2(ds,0.0)))).r; 
+      float bumpHeightPlus_dt = (vec3(texture(uSampler3, vTexCoord+vec2(0.0,dt)))).r;
+    
+      //float dbds = 1.0*(bumpHeightPlus_ds-bumpHeight)/ds; // commented out for reference, see below
+      //float dbdt = 1.0*(bumpHeightPlus_dt-bumpHeight)/dt;
+    
+      // whether or not divide by ds, dt doesn't really matter since just affects bump scale coefficient
+      float dbds = 4.0*(bumpHeightPlus_ds-bumpHeight); // coefficient scales bump effect
+      float dbdt = 4.0*(bumpHeightPlus_dt-bumpHeight); // coefficient scales bump effect
+    
+      //vec3 nBumped1 = normalize(aVertexNormal2Normalized - dbds*nCrosspt + dbdt*nCrossps);
+      vec3 nBumped = normalize(uNormalMatrix2*normalize(aVertexNormal2Normalized - dbds*nCrosspt + dbdt*nCrossps));
+    
+      // For spherical environment mapping texture coordinates (using normal perturbed by bump mapping)
+      vec2 vTexCoordRefl = vec2((nBumped.x+1.0)/2.0, (nBumped.y+1.0)/2.0);
+    
+      // coefficient for diffuse reflection 
+      float kd = 0.4; 
+      // coefficient for specular reflection;
+      float ks = 0.3; 
+      // coefficient for white ambient light
+      float ka = 0.15; 
+      // coefficient for spherical environmental map which acts similar to ambient
+      float ka_probe = 0.15; 
+    
+      // color of the specular light
+      vec3 whitelight = vec3(1.0,1.0,1.0); 
+    
+      // color of the diffuse light. If no textures, teapot just looks like color of diffuse light
+      vec3 whitelight2 = vec3(1.0,1.0,1.0); 
+     
+      vec3 baseTexture = vec3(texture(uSampler, vTexCoord));
+      vec3 sphereProbe = vec3(texture(uSampler2, vTexCoordRefl));
+    
+      // Doing polka dots for procedural texture 
+      // scale the model coordinates by some amount so rounding to nearest integer works properly
+      vec3 scaledVertexPosition2 = 15.0*aVertexPosition2;
+      // set color to a dimmer white by default
+      vec3 polkadot = vec3(0.5,0.5,0.5); 
+      if(distance(scaledVertexPosition2, roundEven(scaledVertexPosition2)) < 0.18)
+        // polkadots are supposed to be gold
+        polkadot = vec3(1.0,0.843,0.0);
+    
+      // material color - using a mix of the the procedural texture and the base texture
+      vec3 materialcolor = 0.45*polkadot + 0.55*baseTexture; //+ 0.4*sphereProbe;
+    
+      // lambertian reflection calculation. Material color from textures * white light * n.l where n is the bumped normal
+      vec3 diffuselight = whitelight2*max(dot(nBumped,normalize(l)),0.0);
+     
+      // reflection vector for specular light - using perturbed normal (bump normal)
+      vec3 r = normalize(reflect(normalize(-l),nBumped));
+      // specular light calculation
+      vec3 specularlight = whitelight*pow(max(dot(normalize(v),normalize(r)),0.0),10.0);
+    
+      vec3 c = ka*sphereProbe + ka_probe*materialcolor + ks*specularlight + kd*diffuselight*materialcolor;
+                                                                                 
+      outColor = vec4(c,1.0);
+    }
+    `;
     
     
-  //
-  // set up third texture and sampler
-  // HEIGHT MAP FOR BUMP MAPPING
-
-  texture3 = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, texture3);
-
-  var sampler3 = gl.createSampler();
-  gl.bindSampler(2, sampler3);
-
-  //
-  // load texture image using webgl2fundamentals boilerplate
-  // initially creates just a 1x1 blue pixel as a placeholder
-  // replaced by actual texture image once loaded
-  //
-
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA,
-                gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 255, 255]));
-
-  var image3 = new Image();
-  //image3.src = "flycut_Roughness2.png";
-  image3.src = "illinois512croppedBWblur.png";
-  image3.addEventListener("load", function() {
-    gl.bindTexture(gl.TEXTURE_2D, texture3);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, 512, 512, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, image3);  
-    gl.generateMipmap(gl.TEXTURE_2D);
-
-
-  });
-
-  //
-  // set up transformation matrices
-  //
-  projection = glMatrix.mat4.create();
-  glMatrix.mat4.perspective(projection, Math.PI/6, 1.0,0.1);
-  requestAnimationFrame(draw);
-}
-
-function loadshaders(vertexShaderSource,fragmentShaderSource) {
-  var vstextbox = document.getElementById("vertexshader");
-
-  var vertexShader = gl.createShader(gl.VERTEX_SHADER);
-  gl.shaderSource(vertexShader, vertexShaderSource);
-  gl.compileShader(vertexShader);
-  if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS))
-    alert("Vertex Shader Error:\n" + gl.getShaderInfoLog(vertexShader));
-
-  var fstextbox = document.getElementById("fragmentshader");
-
-  var fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
-  gl.shaderSource(fragmentShader, fragmentShaderSource);
-  gl.compileShader(fragmentShader);
-  if (!gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS))
-    alert("Fragment Shader Error:\n" + gl.getShaderInfoLog(fragmentShader));
-
-  //
-  // Compile shaders and get link ID's to the attributes and uniforms
-  //
-
-  shaderProgram = gl.createProgram();
-  gl.attachShader(shaderProgram, vertexShader);
-  gl.attachShader(shaderProgram, fragmentShader);
-  gl.linkProgram(shaderProgram);
-  if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS))
-    alert("Failed to setup shaders");
-
-  vert_pos_attr = gl.getAttribLocation(shaderProgram, "aVertexPosition");
-  vert_normal_attr = gl.getAttribLocation(shaderProgram, "aVertexNormal");
-  modelview_uniform = gl.getUniformLocation(shaderProgram, "uModelViewMatrix"); 
-  normal_uniform = gl.getUniformLocation(shaderProgram, "uNormalMatrix"); 
-  projection_uniform = gl.getUniformLocation(shaderProgram, "uProjectionMatrix"); 
-  sampler_uniform = gl.getUniformLocation(shaderProgram, "uSampler"); 
-  sampler2_uniform = gl.getUniformLocation(shaderProgram, "uSampler2"); 
-  sampler3_uniform = gl.getUniformLocation(shaderProgram, "uSampler3"); // for bump mapping
-}
-
-//
-// draw callback function that is passed to requestAnimationFrame()
-//
-
-function draw(time) {
-  gl.clearColor(0.075, 0.16, 0.294, 1.0);
-  gl.clearDepth(1.0);
-  gl.enable(gl.DEPTH_TEST);
-  gl.depthFunc(gl.LEQUAL);
-  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-  modelview = glMatrix.mat4.create();
-  glMatrix.mat4.translate(modelview,modelview,[0.0, 0.0, -2.0]);
-  glMatrix.mat4.rotateY(modelview,modelview, time*0.0003); // increase/decrease time*0.X to change rotation speed
-
-  normalmatrix = glMatrix.mat3.create();
-  glMatrix.mat3.normalFromMat4(normalmatrix,modelview);
-
-  gl.useProgram(shaderProgram);
-
-  gl.uniformMatrix4fv(modelview_uniform, false, modelview);
-  gl.uniformMatrix3fv(normal_uniform, false, normalmatrix);
-  gl.uniformMatrix4fv(projection_uniform, false, projection);
-
-  gl.uniform1i(sampler_uniform,0);
-  gl.uniform1i(sampler2_uniform,1);
-  gl.uniform1i(sampler3_uniform,2); // for bump mapping
-
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, texture);
-  gl.activeTexture(gl.TEXTURE1);
-  gl.bindTexture(gl.TEXTURE_2D, texture2);
-  gl.activeTexture(gl.TEXTURE2); // for bump mapping
-  gl.bindTexture(gl.TEXTURE_2D, texture3); // for bump mapping
-
-  gl.bindVertexArray(teapot_vao);
-  gl.drawElements(gl.TRIANGLES,
-                  teapot.faces.length,
-                  gl.UNSIGNED_SHORT,
-                  0);
-
-  requestAnimationFrame(draw);
-}
-
-
-</script>
-
-<body onload="initwebgl()">
-<h1><b>Photorealistic Utah Teapot by Nicholas DaRosa</b></h1>
-<canvas id="myGLCanvas" width="800" height="800"></canvas>
-<h1><b>Description</b></h1>
-<p><b>Rotating Utah teapot that uses a combination of Lambertian diffuse reflection, Phong specular reflection, cylindrical texture mapping, procedure texture generation, bump mapping, and a spherical environment map to render an approximate photorealistic teapot.</b></p>
-<p><u>Geometry Processing</u></p> 
-<p> Follows traditional pipeline approach for geometry processing such as creating vertex buffer, coordinate space transformations,etc.</p>
-
-<p><u>Smooth Per-Pixel Shading</u></p> 
-<p>The vertex position, normal vector (n), light vector (l), and view vector (v) from the vertex shader are sent to the fragment shader where those vectors are interpolated then renormalized. These interpolated vectors are used in calculating the color of each fragment in the fragment shader.</p>
-
-<p><u>Diffuse Reflectance</u></p> 
-<p> Used Lambertian diffuse reflectance method with a single white light source. For the dot(n,l) calculation, n is the normal vector after bump mapping has been applied.</p>
-
-<p><u>Specular Highlights</u></p> 
-<p>Used the Phong specular reflectance method with white light and a specular gleam exponent of 10. For the reflect vector calculation, the normal vector after bump mapping has been applied was used.</p>
-
-<p><u>Surface Texture</u></p>  
-<p>Used cylindrical mapping for mapping surface textures. May be subtle, but surface texture is that of flycut metal which adds the appearance of swirls/archs to the surface of the teapot. Compared to source image, version used in this project has been brightened and color shifted. Source for flycut2.png texture: https://renderman.pixar.com/pixar-one-thirty under Millmetals folder.</p>
-
-<p><u>Reflective Surface</u></p>  
-<p>Used a spherical environmental map of St. Peter's Basilica. Mapped texture coordinates s,t to the sphere map using the x and y components of the normal vector. This spherical environment map was considered part of the ambient light for the teapot. Source for St. Peter's Basilica probe (stpeters_probe.png): https://www.pauldebevec.com/Probes/</p>
-
-<p><u>Procedural Texture</u></p> 
-<p>Created a procedural textural that places gold polka dots on the teapot. This was done in the fragment shader by taking each interpolated model vertex position, scaling that vertex positions by a factor of 15.0, then having the conditional statement that if the distance between the vertex position (x,y,z) and the vertex position rounded to the nearest integer is less than 0.18, then make that fragment the color of gold.</p>
-
-</p><u>Bump Mapping</u></p>  
- <p>Created a black and white version of the Illinois logo and slightly blurred it using online tools. Added this new black and white texture to the program as was done for the boilerplate textures except using gl.LUMINANCE instead gl.RGBA in the gl.texImage2D parameters. Then in the fragment shader, followed the methodolgy outlined in the course for bump mapping n' = n - dB/ds*(nxPt)+dB/dt *(nxPs) where n is the original normal, n' is the perturbed normal after bump mapping, dB/ds is the difference in luminance between adjecent fragments with respect to a small change in texture coordinate s, dB/dt is the difference in luminance between adjecent fragments with respect to a small change in texture coordinate s, and Pt is dP/dt and Ps is dP/ds where P is a point on the teapot in terms of x,y,z.</p>
-</body>
+    
+    function initwebgl() {
+    
+      //
+      // create a graphics context
+      //
+    
+      var canvas = document.getElementById("myGLCanvas");
+      gl = canvas.getContext("webgl2");
+      if (!gl)
+        alert("Failed to create WebGL context!");
+    
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    
+      loadshaders(vs,fs);
+    
+      // set up vertex array object
+     
+      teapot_vao = gl.createVertexArray();
+      gl.bindVertexArray(teapot_vao);
+    
+      // create a coordinate buffer of vertex positions and
+      // connect it to the vertex shader positions
+     
+      gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+      gl.bufferData(gl.ARRAY_BUFFER,
+                    new Float32Array(teapot.positions),
+                    gl.STATIC_DRAW);
+    
+      gl.enableVertexAttribArray(vert_pos_attr);
+      gl.vertexAttribPointer(vert_pos_attr, 3, gl.FLOAT, false, 0, 0);
+    
+      // create a coordinate buffer of vertex positions and
+      // connect it to the vertex shader positions
+      // but normalize the normals first
+    
+      var x,y,z,d,i;
+      for (i = 0; i < teapot.normals.length; i += 3) {
+        x = teapot.normals[i];
+        y = teapot.normals[i+1];
+        z = teapot.normals[i+2];
+    
+        d = 1.0/Math.sqrt(x*x + y*y + z*z);
+    
+        teapot.normals[i] *= d;
+        teapot.normals[i+1] *= d;
+        teapot.normals[i+2] *= d;
+        
+      }
+    
+      gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+      gl.bufferData(gl.ARRAY_BUFFER,
+                    new Float32Array(teapot.normals),
+                    gl.STATIC_DRAW);
+    
+      gl.enableVertexAttribArray(vert_normal_attr);
+      gl.vertexAttribPointer(vert_normal_attr, 3, gl.FLOAT, false, 0, 0);
+    
+      // create an index buffer of triangle faces
+    
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.createBuffer()); 
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,
+                    new Uint16Array(teapot.faces),
+                    gl.STATIC_DRAW);
+    
+      //
+      // set up texture and sampler
+      // BASE TEXTURE
+    
+      texture = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+    
+      var sampler = gl.createSampler();
+      gl.bindSampler(0, sampler);
+    
+      //
+      // load texture image using webgl2fundamentals boilerplate
+      // initially creates just a 1x1 blue pixel as a placeholder
+      // replaced by actual texture image once loaded
+      // 
+    
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA,
+                    gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 255, 255]));
+    
+      var image = new Image();
+      //image.src = "illinois512cropped.png";
+      image.src = "flycut2.png"; // source: https://renderman.pixar.com/pixar-one-thirty under Millmetals. 
+    
+      image.addEventListener("load", function() {
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        // Need to update texture RESOLUTION if change the image from UIUC stadium to image with different resolution
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 512, 0, gl.RGBA, gl.UNSIGNED_BYTE, image);
+        gl.generateMipmap(gl.TEXTURE_2D);
+      });
+    
+      //
+      // set up second texture and sampler
+      // REFLECTION MAP
+    
+      texture2 = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, texture2);
+    
+      var sampler2 = gl.createSampler();
+      gl.bindSampler(1, sampler2);
+    
+      //
+      // load texture image using webgl2fundamentals boilerplate
+      // initially creates just a 1x1 blue pixel as a placeholder
+      // replaced by actual texture image once loaded
+      //
+    
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA,
+                    gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 255, 255]));
+    
+      var image2 = new Image();
+      //image2.src = "stadium sphere.jpg";
+      image2.src = "stpeters_probe.png";  // source for St. Peter's Basilica probe: https://www.pauldebevec.com/Probes/
+      image2.addEventListener("load", function() {
+        gl.bindTexture(gl.TEXTURE_2D, texture2);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        // Need to update textture RESOLUTION if change the image from UIUC stadium to something else
+        //gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 256, 0, gl.RGBA, gl.UNSIGNED_BYTE, image2);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1500, 1500, 0, gl.RGBA, gl.UNSIGNED_BYTE, image2);
+        gl.generateMipmap(gl.TEXTURE_2D);
+      });
+        
+        
+      //
+      // set up third texture and sampler
+      // HEIGHT MAP FOR BUMP MAPPING
+    
+      texture3 = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, texture3);
+    
+      var sampler3 = gl.createSampler();
+      gl.bindSampler(2, sampler3);
+    
+      //
+      // load texture image using webgl2fundamentals boilerplate
+      // initially creates just a 1x1 blue pixel as a placeholder
+      // replaced by actual texture image once loaded
+      //
+    
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA,
+                    gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 255, 255]));
+    
+      var image3 = new Image();
+      //image3.src = "flycut_Roughness2.png";
+      image3.src = "illinois512croppedBWblur.png";
+      image3.addEventListener("load", function() {
+        gl.bindTexture(gl.TEXTURE_2D, texture3);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, 512, 512, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, image3);  
+        gl.generateMipmap(gl.TEXTURE_2D);
+    
+    
+      });
+    
+      //
+      // set up transformation matrices
+      //
+      projection = glMatrix.mat4.create();
+      glMatrix.mat4.perspective(projection, Math.PI/6, 1.0,0.1);
+      requestAnimationFrame(draw);
+    }
+    
+    function loadshaders(vertexShaderSource,fragmentShaderSource) {
+      var vstextbox = document.getElementById("vertexshader");
+    
+      var vertexShader = gl.createShader(gl.VERTEX_SHADER);
+      gl.shaderSource(vertexShader, vertexShaderSource);
+      gl.compileShader(vertexShader);
+      if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS))
+        alert("Vertex Shader Error:\n" + gl.getShaderInfoLog(vertexShader));
+    
+      var fstextbox = document.getElementById("fragmentshader");
+    
+      var fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+      gl.shaderSource(fragmentShader, fragmentShaderSource);
+      gl.compileShader(fragmentShader);
+      if (!gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS))
+        alert("Fragment Shader Error:\n" + gl.getShaderInfoLog(fragmentShader));
+    
+      //
+      // Compile shaders and get link ID's to the attributes and uniforms
+      //
+    
+      shaderProgram = gl.createProgram();
+      gl.attachShader(shaderProgram, vertexShader);
+      gl.attachShader(shaderProgram, fragmentShader);
+      gl.linkProgram(shaderProgram);
+      if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS))
+        alert("Failed to setup shaders");
+    
+      vert_pos_attr = gl.getAttribLocation(shaderProgram, "aVertexPosition");
+      vert_normal_attr = gl.getAttribLocation(shaderProgram, "aVertexNormal");
+      modelview_uniform = gl.getUniformLocation(shaderProgram, "uModelViewMatrix"); 
+      normal_uniform = gl.getUniformLocation(shaderProgram, "uNormalMatrix"); 
+      projection_uniform = gl.getUniformLocation(shaderProgram, "uProjectionMatrix"); 
+      sampler_uniform = gl.getUniformLocation(shaderProgram, "uSampler"); 
+      sampler2_uniform = gl.getUniformLocation(shaderProgram, "uSampler2"); 
+      sampler3_uniform = gl.getUniformLocation(shaderProgram, "uSampler3"); // for bump mapping
+    }
+    
+    //
+    // draw callback function that is passed to requestAnimationFrame()
+    //
+    
+    function draw(time) {
+      gl.clearColor(0.075, 0.16, 0.294, 1.0);
+      gl.clearDepth(1.0);
+      gl.enable(gl.DEPTH_TEST);
+      gl.depthFunc(gl.LEQUAL);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    
+      modelview = glMatrix.mat4.create();
+      glMatrix.mat4.translate(modelview,modelview,[0.0, 0.0, -2.0]);
+      glMatrix.mat4.rotateY(modelview,modelview, time*0.0003); // increase/decrease time*0.X to change rotation speed
+    
+      normalmatrix = glMatrix.mat3.create();
+      glMatrix.mat3.normalFromMat4(normalmatrix,modelview);
+    
+      gl.useProgram(shaderProgram);
+    
+      gl.uniformMatrix4fv(modelview_uniform, false, modelview);
+      gl.uniformMatrix3fv(normal_uniform, false, normalmatrix);
+      gl.uniformMatrix4fv(projection_uniform, false, projection);
+    
+      gl.uniform1i(sampler_uniform,0);
+      gl.uniform1i(sampler2_uniform,1);
+      gl.uniform1i(sampler3_uniform,2); // for bump mapping
+    
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, texture2);
+      gl.activeTexture(gl.TEXTURE2); // for bump mapping
+      gl.bindTexture(gl.TEXTURE_2D, texture3); // for bump mapping
+    
+      gl.bindVertexArray(teapot_vao);
+      gl.drawElements(gl.TRIANGLES,
+                      teapot.faces.length,
+                      gl.UNSIGNED_SHORT,
+                      0);
+    
+      requestAnimationFrame(draw);
+    }
+    
+    
+  </script>
+  <body onload="initwebgl()">
+    <h1><b>Photorealistic Utah Teapot by Nicholas DaRosa</b></h1>
+    <canvas id="myGLCanvas" width="800" height="800"></canvas>
+    <h1><b>Description</b></h1>
+    <p><b>Rotating Utah teapot that uses a combination of Lambertian diffuse reflection, Phong specular reflection, cylindrical texture mapping, procedure texture generation, bump mapping, and a spherical environment map to render an approximate photorealistic teapot.</b></p>
+    <p><u>Geometry Processing</u></p>
+    <p> Follows traditional pipeline approach for geometry processing such as creating vertex buffer, coordinate space transformations,etc.</p>
+    <p><u>Smooth Per-Pixel Shading</u></p>
+    <p>The vertex position, normal vector (n), light vector (l), and view vector (v) from the vertex shader are sent to the fragment shader where those vectors are interpolated then renormalized. These interpolated vectors are used in calculating the color of each fragment in the fragment shader.</p>
+    <p><u>Diffuse Reflectance</u></p>
+    <p> Used Lambertian diffuse reflectance method with a single white light source. For the dot(n,l) calculation, n is the normal vector after bump mapping has been applied.</p>
+    <p><u>Specular Highlights</u></p>
+    <p>Used the Phong specular reflectance method with white light and a specular gleam exponent of 10. For the reflect vector calculation, the normal vector after bump mapping has been applied was used.</p>
+    <p><u>Surface Texture</u></p>
+    <p>Used cylindrical mapping for mapping surface textures. May be subtle, but surface texture is that of flycut metal which adds the appearance of swirls/archs to the surface of the teapot. Compared to source image, version used in this project has been brightened and color shifted. Source for flycut2.png texture: https://renderman.pixar.com/pixar-one-thirty under Millmetals folder.</p>
+    <p><u>Reflective Surface</u></p>
+    <p>Used a spherical environmental map of St. Peter's Basilica. Mapped texture coordinates s,t to the sphere map using the x and y components of the normal vector. This spherical environment map was considered part of the ambient light for the teapot. Source for St. Peter's Basilica probe (stpeters_probe.png): https://www.pauldebevec.com/Probes/</p>
+    <p><u>Procedural Texture</u></p>
+    <p>Created a procedural textural that places gold polka dots on the teapot. This was done in the fragment shader by taking each interpolated model vertex position, scaling that vertex positions by a factor of 15.0, then having the conditional statement that if the distance between the vertex position (x,y,z) and the vertex position rounded to the nearest integer is less than 0.18, then make that fragment the color of gold.</p>
+    </p><u>Bump Mapping</u></p>  
+    <p>Created a black and white version of the Illinois logo and slightly blurred it using online tools. Added this new black and white texture to the program as was done for the boilerplate textures except using gl.LUMINANCE instead gl.RGBA in the gl.texImage2D parameters. Then in the fragment shader, followed the methodolgy outlined in the course for bump mapping n' = n - dB/ds*(nxPt)+dB/dt *(nxPs) where n is the original normal, n' is the perturbed normal after bump mapping, dB/ds is the difference in luminance between adjecent fragments with respect to a small change in texture coordinate s, dB/dt is the difference in luminance between adjecent fragments with respect to a small change in texture coordinate s, and Pt is dP/dt and Ps is dP/ds where P is a point on the teapot in terms of x,y,z.</p>
+  </body>
 </html>
